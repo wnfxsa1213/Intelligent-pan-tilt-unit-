@@ -30,7 +30,7 @@ IMU_Status_t IMU_Init(void)
   /* 初始化I2C总线 */
   status = IMU_PORT_I2C_Init();
   if (status != IMU_OK) {
-    return status;
+    return status;//错误
   }
 
   /* 延迟让MPU6050上电稳定 */

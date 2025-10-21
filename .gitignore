@@ -31,3 +31,10 @@ build/
 # Documentation build artifacts (keeping source docs)
 # If you want to track generated docs, remove this line
 # docs/build/
+#DOCS/
+docs/
+#claude
+*claude.md
+*AGENTS.md
+docs/CLAUDE.md
+*.claude
