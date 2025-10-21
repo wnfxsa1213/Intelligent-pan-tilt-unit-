@@ -41,6 +41,8 @@ Core/Src/gpio.c \
 Core/Src/usart.c \
 Core/Src/imu.c \
 Core/Src/soft_i2c.c \
+Core/Src/servo.c \
+Core/Src/crsf.c \
 Core/Src/stm32f1xx_it.c \
 Core/Src/stm32f1xx_hal_msp.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \

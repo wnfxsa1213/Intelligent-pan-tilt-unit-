@@ -20,6 +20,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
 
+/* USER CODE BEGIN Includes */
+#include "crsf.h"
+/* USER CODE END Includes */
+
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
@@ -307,5 +311,13 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  CRSF_UART_RxCpltCallback(huart);
+}
 
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  CRSF_UART_ErrorCallback(huart);
+}
 /* USER CODE END 1 */

@@ -22,10 +22,14 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "servo.h"
+#include "crsf.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include <string.h>
+#include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -122,6 +126,17 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  if (Servo_Init() != HAL_OK)
+  {
+    UartSendText("艹，舵机PWM没起来，赶紧把TIM5和供电查一遍！\r\n");
+  }
+  else
+  {
+    (void)Servo_SetAngle(SERVO_PITCH, 135.0f);
+    (void)Servo_SetAngle(SERVO_YAW, 135.0f);
+  }
+
+  CRSF_Init();
 
   /* ==================== 初始化IMU传感器 (新API) ==================== */
 
@@ -181,8 +196,10 @@ int main(void)
     }
 
     HAL_Delay(100U);  /* 10Hz输出频率 */
+    CRSF_Update();
 
   /* USER CODE END 3 */
+  }
 }
 
 /**
