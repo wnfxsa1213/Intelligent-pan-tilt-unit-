@@ -1,0 +1,33 @@
+# Build artifacts
+build/
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.su
+*.d
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug files
+*.launch
+.settings/
+
+# Generated files
+*.log
+
+# STM32CubeMX generated backup files
+*.ioc.bak
+.mxproject.bak
+
+# Documentation build artifacts (keeping source docs)
+# If you want to track generated docs, remove this line
+# docs/build/

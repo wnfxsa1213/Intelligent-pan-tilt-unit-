@@ -1,0 +1,364 @@
+{
+  "project": {
+    "name": "STM32F1 IMU",
+    "description": "基于STM32F103的惯性测量单元(IMU)项目，使用MPU6050传感器实现姿态检测和运动追踪",
+    "type": "embedded-c-stm32",
+    "license": "GPL-3.0",
+    "repository": "https://github.com/wnfxsa1213/STM32F1-IMU",
+    "last_scan": "2025-10-21T18:37:25+08:00",
+    "scan_version": "init-architect-v1.0"
+  },
+  "metadata": {
+    "total_files": 95,
+    "core_app_files": 15,
+    "lines_of_code_approx": 2000,
+    "primary_language": "C",
+    "build_system": "Makefile",
+    "mcu": "STM32F103RCT6",
+    "toolchain": "arm-none-eabi-gcc"
+  },
+  "modules": [
+    {
+      "name": "Core",
+      "path": "Core/",
+      "description": "应用核心代码（IMU驱动、主逻辑、外设初始化）",
+      "status": "active",
+      "coverage": "100%",
+      "entry_points": [
+        "Core/Src/main.c"
+      ],
+      "key_files": [
+        "Core/Src/main.c",
+        "Core/Src/imu.c",
+        "Core/Src/soft_i2c.c",
+        "Core/Inc/imu.h",
+        "Core/Inc/soft_i2c.h",
+        "Core/Inc/imu_port.h"
+      ],
+      "interfaces": [
+        {
+          "name": "IMU_Init",
+          "type": "function",
+          "description": "初始化MPU6050传感器",
+          "return_type": "IMU_Status_t"
+        },
+        {
+          "name": "IMU_ReadData",
+          "type": "function",
+          "description": "读取IMU物理单位数据",
+          "parameters": "IMU_Data_t *data",
+          "return_type": "IMU_Status_t"
+        },
+        {
+          "name": "SoftI2C_ReadRegisters",
+          "type": "function",
+          "description": "软I2C读取多个寄存器",
+          "parameters": "uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint16_t length",
+          "return_type": "HAL_StatusTypeDef"
+        }
+      ],
+      "dependencies": [
+        "Drivers/STM32F1xx_HAL_Driver",
+        "Drivers/CMSIS"
+      ],
+      "tests": [
+        {
+          "name": "IMU初始化与数据读取",
+          "status": "passed",
+          "description": "WHO_AM_I验证 + 连续读取稳定性测试"
+        },
+        {
+          "name": "软I2C通信",
+          "status": "passed",
+          "description": "单字节写入、多字节读取、14字节连续读取"
+        }
+      ],
+      "issues": [
+        {
+          "severity": "medium",
+          "description": "USART2/3波特率配置错误（当前115200，需要420000/921600）",
+          "file": "Core/Src/usart.c",
+          "line": "46, 104"
+        },
+        {
+          "severity": "low",
+          "description": "IMU采样率偏低（当前10Hz，目标1kHz）",
+          "file": "Core/Src/main.c",
+          "line": 183
+        }
+      ],
+      "next_steps": [
+        "实现舵机驱动模块（servo.c/h）",
+        "优化IMU采样频率至1kHz",
+        "添加CRSF协议解析（crsf.c/h）",
+        "实现Jetson通信框架（jetson_comm.c/h）"
+      ]
+    },
+    {
+      "name": "Drivers",
+      "path": "Drivers/",
+      "description": "STM32 HAL库和CMSIS（由STM32CubeMX生成）",
+      "status": "stable",
+      "coverage": "reference-only",
+      "source": "STM32CubeMX (STM32Cube FW_F1 V1.8.6)",
+      "key_components": [
+        {
+          "name": "STM32F1xx_HAL_Driver",
+          "version": "V1.1.9",
+          "license": "BSD-3-Clause",
+          "modules": [
+            "GPIO",
+            "UART",
+            "TIM",
+            "DMA",
+            "RCC",
+            "CORTEX",
+            "FLASH",
+            "PWR",
+            "EXTI"
+          ]
+        },
+        {
+          "name": "CMSIS",
+          "version": "V5.6.0",
+          "license": "Apache-2.0",
+          "components": [
+            "core_cm3.h (Cortex-M3核心)",
+            "stm32f1xx.h (设备定义)",
+            "system_stm32f1xx.h (系统初始化)"
+          ]
+        }
+      ],
+      "modification_policy": "do-not-modify",
+      "update_method": "regenerate-via-cubemx"
+    },
+    {
+      "name": "docs",
+      "path": "docs/",
+      "description": "项目文档（开发文档、编程规范）",
+      "status": "active",
+      "coverage": "100%",
+      "documents": [
+        {
+          "name": "开发文档.md",
+          "type": "technical-design",
+          "topics": [
+            "系统架构",
+            "硬件配置",
+            "软件模块设计",
+            "通信协议",
+            "开发流程",
+            "测试计划"
+          ],
+          "last_update": "2025-01"
+        },
+        {
+          "name": "编程规范.md",
+          "type": "coding-standard",
+          "topics": [
+            "命名规范",
+            "代码格式",
+            "注释规范",
+            "HAL库使用",
+            "内存管理",
+            "中断与实时性",
+            "错误处理",
+            "Git提交规范"
+          ],
+          "last_update": "2025-01"
+        }
+      ]
+    },
+    {
+      "name": "build-system",
+      "path": "./",
+      "description": "构建系统（Makefile + 链接脚本 + CubeMX配置）",
+      "status": "configured",
+      "coverage": "100%",
+      "components": [
+        {
+          "file": "Makefile",
+          "type": "build-script",
+          "target": "IMU",
+          "toolchain": "arm-none-eabi-gcc",
+          "optimization": "-Og (debug)",
+          "key_flags": [
+            "-mcpu=cortex-m3",
+            "-mthumb",
+            "-DUSE_HAL_DRIVER",
+            "-DSTM32F103xE"
+          ]
+        },
+        {
+          "file": "IMU.ioc",
+          "type": "cubemx-config",
+          "version": "6.15.0",
+          "mcu": "STM32F103RCTx",
+          "peripherals": [
+            "DMA",
+            "USART1 (115200)",
+            "USART2 (115200, 需改为420000)",
+            "USART3 (115200, 需改为921600, DMA)",
+            "TIM5 (PWM, 333Hz)",
+            "RCC (HSE 8MHz, PLL×9, SYSCLK 72MHz)"
+          ]
+        },
+        {
+          "file": "STM32F103XX_FLASH.ld",
+          "type": "linker-script",
+          "memory": {
+            "flash": "256KB (0x8000000)",
+            "ram": "48KB (0x20000000)",
+            "heap": "0x200 (512B)",
+            "stack": "0x400 (1KB)"
+          }
+        }
+      ]
+    }
+  ],
+  "hardware_config": {
+    "mcu": {
+      "model": "STM32F103RCT6",
+      "core": "Cortex-M3",
+      "frequency": "72MHz",
+      "flash": "256KB",
+      "ram": "48KB",
+      "package": "LQFP64"
+    },
+    "peripherals": {
+      "imu": {
+        "sensor": "MPU6050",
+        "interface": "软I2C (GPIO位操作)",
+        "scl_pin": "PA12",
+        "sda_pin": "PA11",
+        "i2c_address": "0x68",
+        "speed": "~100kHz"
+      },
+      "servos": {
+        "count": 2,
+        "interface": "TIM5 PWM",
+        "frequency": "333Hz",
+        "pins": {
+          "pitch": "PA0 (TIM5_CH1)",
+          "yaw": "PA1 (TIM5_CH2)"
+        },
+        "range": "0-270°",
+        "pulse_width": "500-2500μs"
+      },
+      "uart": {
+        "debug": {
+          "instance": "USART1",
+          "pins": "PA9(TX), PA10(RX)",
+          "baudrate": 115200,
+          "purpose": "调试输出"
+        },
+        "crsf": {
+          "instance": "USART2",
+          "pins": "PA2(TX), PA3(RX)",
+          "baudrate": 420000,
+          "purpose": "CRSF遥控器接收",
+          "status": "待配置"
+        },
+        "jetson": {
+          "instance": "USART3",
+          "pins": "PB10(TX), PB11(RX)",
+          "baudrate": 921600,
+          "dma": "DMA1_CH2(TX), DMA1_CH3(RX)",
+          "purpose": "Jetson NX通信",
+          "status": "待配置"
+        }
+      },
+      "other": {
+        "laser": {
+          "pin": "PA7",
+          "type": "GPIO_Output",
+          "purpose": "激光指示器"
+        }
+      }
+    }
+  },
+  "scan_coverage": {
+    "summary": {
+      "total_files_scanned": 95,
+      "core_app_files_scanned": 15,
+      "hal_driver_files": "reference-only",
+      "coverage_percentage": "100%",
+      "truncated": false
+    },
+    "modules_coverage": {
+      "Core": "100%",
+      "Drivers": "reference-only (不详细分析HAL库源码)",
+      "docs": "100%",
+      "build-system": "100%"
+    },
+    "gaps": [
+      {
+        "category": "未实现功能",
+        "items": [
+          "舵机驱动模块（servo.c/h）",
+          "CRSF协议解析（crsf.c/h）",
+          "Jetson通信框架（jetson_comm.c/h）",
+          "姿态融合算法（attitude.c/h）",
+          "PID控制器（pid.c/h）",
+          "状态机（state_machine.c/h）"
+        ]
+      },
+      {
+        "category": "配置缺口",
+        "items": [
+          "USART2波特率需改为420000",
+          "USART3波特率需改为921600",
+          "IMU采样率需提升至1kHz"
+        ]
+      }
+    ]
+  },
+  "recommendations": {
+    "priority_1": [
+      "修正USART2/3波特率配置（在CubeMX中修改IMU.ioc）",
+      "实现舵机驱动模块（servo.c/h），验证TIM5 PWM输出",
+      "优化IMU采样频率至1kHz（使用TIM2中断替代HAL_Delay）"
+    ],
+    "priority_2": [
+      "实现CRSF协议解析模块",
+      "实现Jetson通信框架（DMA环形缓冲区）",
+      "添加失联保护机制"
+    ],
+    "priority_3": [
+      "集成姿态融合算法（卡尔曼滤波/EKF）",
+      "实现PID控制器",
+      "开发状态机整合所有模块"
+    ],
+    "next_scan_focus": [
+      "补扫待实现模块的接口设计文档",
+      "补扫测试用例与测试结果",
+      "补扫性能基准测试数据"
+    ]
+  },
+  "ignored_patterns": [
+    ".git/**",
+    "build/**",
+    "*.o",
+    "*.d",
+    "*.elf",
+    "*.hex",
+    "*.bin",
+    "*.map"
+  ],
+  "tools": {
+    "ide": "VS Code / STM32CubeIDE",
+    "build": "GNU Make",
+    "compiler": "arm-none-eabi-gcc",
+    "debugger": "GDB + OpenOCD",
+    "flash": "OpenOCD + ST-Link",
+    "config": "STM32CubeMX 6.15.0",
+    "monitor": "minicom / screen"
+  },
+  "quality_metrics": {
+    "compilation_warnings": 0,
+    "code_style_compliance": "enforced (见编程规范.md)",
+    "documentation_coverage": "50%+",
+    "test_coverage": "基础功能已测试，高级功能待测试",
+    "static_analysis": "未启用（建议添加cppcheck）"
+  }
+}
