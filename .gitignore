@@ -38,3 +38,6 @@ docs/
 *AGENTS.md
 docs/CLAUDE.md
 *.claude
+*/CLAUDE.md
+*/AGENTS.md
+.claude/
