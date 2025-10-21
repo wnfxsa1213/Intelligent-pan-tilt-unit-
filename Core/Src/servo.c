@@ -15,8 +15,6 @@
 
 #include "servo.h"
 
-#include <math.h>
-
 #include "tim.h"  /* TIM5 句柄 */
 
 #define SERVO_CHANNEL_COUNT      2U
@@ -27,6 +25,7 @@
 #define SERVO_MIN_PULSE_US       500U
 #define SERVO_MAX_PULSE_US       2500U
 #define SERVO_RANGE_PULSE_US     (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)
+#define SERVO_ROUNDING_OFFSET    0.5f
 
 typedef struct
 {
@@ -52,7 +51,7 @@ static uint16_t servo_angle_to_pulse(float angle_deg)
   const float normalized = (angle_deg - SERVO_MIN_ANGLE_DEG) /
                            (SERVO_MAX_ANGLE_DEG - SERVO_MIN_ANGLE_DEG);
   const float pulse      = (float)SERVO_MIN_PULSE_US + normalized * (float)SERVO_RANGE_PULSE_US;
-  return (uint16_t)(pulse + 0.5f);
+  return (uint16_t)(pulse + SERVO_ROUNDING_OFFSET);
 }
 
 static TIM_HandleTypeDef *servo_get_tim(ServoID_t id)
@@ -63,6 +62,11 @@ static TIM_HandleTypeDef *servo_get_tim(ServoID_t id)
 
 static uint32_t servo_get_channel(ServoID_t id)
 {
+  if (id >= SERVO_CHANNEL_COUNT)
+  {
+    return TIM_CHANNEL_1;
+  }
+
   return (id == SERVO_PITCH) ? TIM_CHANNEL_1 : TIM_CHANNEL_2;
 }
 
@@ -94,13 +98,26 @@ HAL_StatusTypeDef Servo_Init(void)
 
   if (HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2) != HAL_OK)
   {
+    (void)HAL_TIM_PWM_Stop(&htim5, TIM_CHANNEL_1);
     return HAL_ERROR;
   }
 
-  g_servo_initialized = 1U;
+  const uint16_t center_pulse = servo_angle_to_pulse(SERVO_CENTER_ANGLE_DEG);
 
-  (void)Servo_SetAngle(SERVO_PITCH, SERVO_CENTER_ANGLE_DEG);
-  (void)Servo_SetAngle(SERVO_YAW, SERVO_CENTER_ANGLE_DEG);
+  if ((servo_apply_output(SERVO_PITCH, center_pulse) != SERVO_STATUS_OK) ||
+      (servo_apply_output(SERVO_YAW, center_pulse) != SERVO_STATUS_OK))
+  {
+    (void)HAL_TIM_PWM_Stop(&htim5, TIM_CHANNEL_1);
+    (void)HAL_TIM_PWM_Stop(&htim5, TIM_CHANNEL_2);
+    return HAL_ERROR;
+  }
+
+  g_servo_channels[SERVO_PITCH].angle_deg = SERVO_CENTER_ANGLE_DEG;
+  g_servo_channels[SERVO_PITCH].pulse_us  = center_pulse;
+  g_servo_channels[SERVO_YAW].angle_deg   = SERVO_CENTER_ANGLE_DEG;
+  g_servo_channels[SERVO_YAW].pulse_us    = center_pulse;
+
+  g_servo_initialized = 1U;
 
   return HAL_OK;
 }
@@ -113,7 +130,12 @@ HAL_StatusTypeDef Servo_Init(void)
  */
 ServoStatus_t Servo_SetAngle(ServoID_t id, float angle_deg)
 {
-  if ((id >= SERVO_CHANNEL_COUNT) || isnan(angle_deg) || !isfinite(angle_deg))
+  if (id >= SERVO_CHANNEL_COUNT)
+  {
+    return SERVO_STATUS_INVALID_PARAM;
+  }
+
+  if ((angle_deg < -360.0f) || (angle_deg > 360.0f))
   {
     return SERVO_STATUS_INVALID_PARAM;
   }

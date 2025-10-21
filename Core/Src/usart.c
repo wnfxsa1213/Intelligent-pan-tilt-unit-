@@ -313,11 +313,19 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 /* USER CODE BEGIN 1 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+  if (huart == NULL)
+  {
+    return;
+  }
   CRSF_UART_RxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  if (huart == NULL)
+  {
+    return;
+  }
   CRSF_UART_ErrorCallback(huart);
 }
 /* USER CODE END 1 */

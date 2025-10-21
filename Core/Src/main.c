@@ -126,14 +126,10 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  if (Servo_Init() != HAL_OK)
+  const HAL_StatusTypeDef servo_status = Servo_Init();
+  if (servo_status != HAL_OK)
   {
-    UartSendText("艹，舵机PWM没起来，赶紧把TIM5和供电查一遍！\r\n");
-  }
-  else
-  {
-    (void)Servo_SetAngle(SERVO_PITCH, 135.0f);
-    (void)Servo_SetAngle(SERVO_YAW, 135.0f);
+    UartSendText("艹，舵机PWM没起来，直接降级成无舵机模式，回头自己查TIM5供电！\r\n");
   }
 
   CRSF_Init();
@@ -141,7 +137,8 @@ int main(void)
   /* ==================== 初始化IMU传感器 (新API) ==================== */
 
   /* 初始化IMU (内部自动完成I2C初始化、芯片ID验证、硬件复位等) */
-  if (IMU_Init() != IMU_OK)
+  const IMU_Status_t imu_status = IMU_Init();
+  if (imu_status != IMU_OK)
   {
     /* 初始化失败 - 可能的原因:
      * 1. I2C连接问题 (SCL/SDA接线错误或虚焊)
@@ -149,7 +146,7 @@ int main(void)
      * 3. I2C地址错误 (检查AD0引脚状态)
      * 4. 芯片ID验证失败 (WHO_AM_I != 0x68)
      */
-    UartSendText("艹，IMU初始化失败，自己检查下线路和供电！\r\n");
+    UartSendText("艹，IMU初始化失败，系统切换到无IMU模式，线路供电自己翻一遍！\r\n");
   }
   else
   {

@@ -20,10 +20,13 @@
 
 #include "usart.h"
 
-#define CRSF_DEVICE_ADDRESS              0xC8U
-#define CRSF_FRAME_TYPE_RC_CHANNELS      0x16U
-#define CRSF_MAX_FRAME_SIZE              64U
-#define CRSF_PAYLOAD_MIN_LENGTH          2U
+#define CRSF_DEVICE_ADDRESS               0xC8U
+#define CRSF_FRAME_TYPE_RC_CHANNELS       0x16U
+#define CRSF_MAX_FRAME_SIZE               64U
+#define CRSF_PAYLOAD_MIN_LENGTH           2U
+#define CRSF_UART_RESTART_DELAY_MS        10U
+#define CRSF_RC_CHANNELS_PAYLOAD_SIZE     22U
+#define CRSF_CHANNEL_VALUE_NEUTRAL        992U
 
 typedef enum
 {
@@ -33,14 +36,26 @@ typedef enum
 } CRSF_ParserState_t;
 
 static volatile CRSF_Data_t g_crsf_data;
-static CRSF_ParserState_t   g_parser_state            = CRSF_STATE_WAIT_ADDRESS;
+static CRSF_ParserState_t   g_parser_state             = CRSF_STATE_WAIT_ADDRESS;
 static uint8_t              g_frame_buffer[CRSF_MAX_FRAME_SIZE];
 static uint8_t              g_expected_length          = 0U;
 static uint8_t              g_payload_index            = 0U;
 static uint8_t              g_uart_rx_byte             = 0U;
 static volatile bool        g_restart_pending          = false;
-static uint32_t             g_last_frame_tick          = 0U;
-static uint32_t             g_last_restart_tick        = 0U;
+static volatile uint32_t    g_last_frame_tick          = 0U;
+static volatile uint32_t    g_last_restart_tick        = 0U;
+
+static inline uint32_t crsf_enter_critical(void)
+{
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  return primask;
+}
+
+static inline void crsf_exit_critical(uint32_t primask)
+{
+  __set_PRIMASK(primask);
+}
 
 static void crsf_reset_parser(void);
 static void crsf_handle_frame(const uint8_t *frame, uint8_t length);
@@ -52,7 +67,7 @@ void CRSF_Init(void)
   memset((void *)&g_crsf_data, 0, sizeof(g_crsf_data));
   for (uint8_t i = 0U; i < CRSF_CHANNEL_COUNT; ++i)
   {
-    g_crsf_data.channels[i] = 992U;  /* CRSF中立值 */
+    g_crsf_data.channels[i] = CRSF_CHANNEL_VALUE_NEUTRAL;
   }
   g_crsf_data.link_active = false;
   g_last_frame_tick       = HAL_GetTick();
@@ -63,8 +78,10 @@ void CRSF_Init(void)
   if (HAL_UART_Receive_IT(&huart2, &g_uart_rx_byte, 1U) != HAL_OK)
   {
     g_crsf_data.frame_error_counter++;
+    uint32_t primask = crsf_enter_critical();
     g_restart_pending   = true;
     g_last_restart_tick = g_last_frame_tick;
+    crsf_exit_critical(primask);
   }
 }
 
@@ -82,6 +99,7 @@ void CRSF_ProcessByte(uint8_t byte)
     case CRSF_STATE_WAIT_LENGTH:
       if ((byte == 0U) || (byte > CRSF_MAX_FRAME_SIZE))
       {
+        g_crsf_data.frame_error_counter++;
         crsf_reset_parser();
         break;
       }
@@ -91,10 +109,14 @@ void CRSF_ProcessByte(uint8_t byte)
       break;
 
     case CRSF_STATE_READ_PAYLOAD:
-      if (g_payload_index < CRSF_MAX_FRAME_SIZE)
+      if (g_payload_index >= CRSF_MAX_FRAME_SIZE)
       {
-        g_frame_buffer[g_payload_index++] = byte;
+        g_crsf_data.frame_error_counter++;
+        crsf_reset_parser();
+        break;
       }
+
+      g_frame_buffer[g_payload_index++] = byte;
 
       if (g_payload_index >= g_expected_length)
       {
@@ -115,29 +137,48 @@ void CRSF_Update(void)
 
   if (g_restart_pending)
   {
-    if ((now - g_last_restart_tick) >= 10U)
+    uint32_t primask = crsf_enter_critical();
+    const uint32_t last_restart_tick = g_last_restart_tick;
+    crsf_exit_critical(primask);
+
+    if ((now - last_restart_tick) >= CRSF_UART_RESTART_DELAY_MS)
     {
       if (HAL_UART_Receive_IT(&huart2, &g_uart_rx_byte, 1U) == HAL_OK)
       {
-        g_restart_pending = false;
+        primask = crsf_enter_critical();
+        g_restart_pending   = false;
+        g_last_restart_tick = now;
+        crsf_exit_critical(primask);
       }
       else
       {
+        primask = crsf_enter_critical();
         g_crsf_data.frame_error_counter++;
         g_last_restart_tick = now;
+        crsf_exit_critical(primask);
       }
     }
   }
 
-  if (g_crsf_data.link_active && ((now - g_last_frame_tick) > CRSF_TIMEOUT_MS))
+  uint32_t primask = crsf_enter_critical();
+  const bool link_active = g_crsf_data.link_active;
+  const uint32_t last_frame_tick = g_last_frame_tick;
+  crsf_exit_critical(primask);
+
+  if (link_active && ((now - last_frame_tick) > CRSF_TIMEOUT_MS))
   {
+    primask = crsf_enter_critical();
     g_crsf_data.link_active = false;
+    crsf_exit_critical(primask);
   }
 }
 
 bool CRSF_IsLinkActive(void)
 {
-  return g_crsf_data.link_active;
+  uint32_t primask = crsf_enter_critical();
+  const bool active = g_crsf_data.link_active;
+  crsf_exit_critical(primask);
+  return active;
 }
 
 void CRSF_GetData(CRSF_Data_t *dest)
@@ -147,10 +188,9 @@ void CRSF_GetData(CRSF_Data_t *dest)
     return;
   }
 
-  uint32_t primask = __get_PRIMASK();
-  __disable_irq();
+  uint32_t primask = crsf_enter_critical();
   CRSF_Data_t snapshot = g_crsf_data;
-  __set_PRIMASK(primask);
+  crsf_exit_critical(primask);
   *dest = snapshot;
 }
 
@@ -166,8 +206,10 @@ void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   if (HAL_UART_Receive_IT(&huart2, &g_uart_rx_byte, 1U) != HAL_OK)
   {
     g_crsf_data.frame_error_counter++;
+    uint32_t primask = crsf_enter_critical();
     g_restart_pending   = true;
     g_last_restart_tick = HAL_GetTick();
+    crsf_exit_critical(primask);
   }
 }
 
@@ -178,12 +220,18 @@ void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  (void)HAL_UART_AbortReceive(huart);
+  if (HAL_UART_AbortReceive(huart) != HAL_OK)
+  {
+    g_crsf_data.frame_error_counter++;
+  }
+
   if (HAL_UART_Receive_IT(&huart2, &g_uart_rx_byte, 1U) != HAL_OK)
   {
     g_crsf_data.frame_error_counter++;
+    uint32_t primask = crsf_enter_critical();
     g_restart_pending   = true;
     g_last_restart_tick = HAL_GetTick();
+    crsf_exit_critical(primask);
   }
 }
 
@@ -252,7 +300,7 @@ static void crsf_handle_frame(const uint8_t *frame, uint8_t length)
 
 static void crsf_parse_rc_channels(const uint8_t *payload, uint8_t length)
 {
-  if (length < 22U)
+  if (length < CRSF_RC_CHANNELS_PAYLOAD_SIZE)
   {
     g_crsf_data.frame_error_counter++;
     return;
@@ -262,6 +310,7 @@ static void crsf_parse_rc_channels(const uint8_t *payload, uint8_t length)
   uint8_t  bits_in_buffer = 0U;
   uint8_t  channel_index = 0U;
 
+  /* CRSF RC Channels: 16路通道，每通道11-bit连续打包，总长度22字节 */
   for (uint8_t i = 0U; i < length; ++i)
   {
     bit_buffer |= ((uint32_t)payload[i] << bits_in_buffer);
@@ -278,7 +327,7 @@ static void crsf_parse_rc_channels(const uint8_t *payload, uint8_t length)
 
   while (channel_index < CRSF_CHANNEL_COUNT)
   {
-    g_crsf_data.channels[channel_index++] = 992U;
+    g_crsf_data.channels[channel_index++] = CRSF_CHANNEL_VALUE_NEUTRAL;
   }
 
   g_crsf_data.timestamp_ms = HAL_GetTick();
