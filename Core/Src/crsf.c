@@ -109,20 +109,52 @@ static void crsf_reset_parser(void)
   memset(g_parser_buffer, 0, sizeof(g_parser_buffer));
 }
 
-static HAL_StatusTypeDef crsf_restart_dma(UART_HandleTypeDef *huart)
+static HAL_StatusTypeDef crsf_start_circular_dma(UART_HandleTypeDef *huart)
 {
-  HAL_StatusTypeDef status = HAL_UART_Receive_DMA(huart, g_dma_buffer, sizeof(g_dma_buffer));
-  if (status == HAL_OK)
+  DMA_HandleTypeDef *hdma = huart->hdmarx;
+  if (hdma == NULL)
   {
-    __HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
-  }
 #if CRSF_DEBUG_TEST
-  else
-  {
-    UartSendText("[CRSF_ERR] UART DMA restart failed\r\n");
-  }
+    UartSendText("[CRSF_ERR] DMA handle missing\r\n");
 #endif
-  return status;
+    return HAL_ERROR;
+  }
+
+  /* 关闭DMA通道，等待硬件确认 */
+  __HAL_DMA_DISABLE(hdma);
+  uint32_t timeout = 1000U;
+  while (((hdma->Instance->CCR & DMA_CCR_EN) != 0U) && (timeout > 0U))
+  {
+    timeout--;
+  }
+  if (timeout == 0U)
+  {
+#if CRSF_DEBUG_TEST
+    UartSendText("[CRSF_ERR] DMA disable timeout\r\n");
+#endif
+    return HAL_ERROR;
+  }
+
+  /* 重新配置源/目的地址与计数器 */
+  hdma->Instance->CPAR  = (uint32_t)&huart->Instance->DR;
+  hdma->Instance->CMAR  = (uint32_t)g_dma_buffer;
+  hdma->Instance->CNDTR = CRSF_DMA_BUFFER_SIZE;
+
+  /* 清除所有挂起标志，避免虚假中断 */
+  __HAL_DMA_CLEAR_FLAG(hdma, __HAL_DMA_GET_GI_FLAG_INDEX(hdma));
+  __HAL_DMA_CLEAR_FLAG(hdma, __HAL_DMA_GET_TC_FLAG_INDEX(hdma));
+  __HAL_DMA_CLEAR_FLAG(hdma, __HAL_DMA_GET_HT_FLAG_INDEX(hdma));
+  __HAL_DMA_CLEAR_FLAG(hdma, __HAL_DMA_GET_TE_FLAG_INDEX(hdma));
+
+  __HAL_DMA_ENABLE(hdma);
+
+  SET_BIT(huart->Instance->CR3, USART_CR3_DMAR);
+  __HAL_UART_CLEAR_IDLEFLAG(huart);
+  __HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
+
+  huart->RxState = HAL_UART_STATE_READY;
+
+  return HAL_OK;
 }
 
 static void crsf_parse_rc_channels(const uint8_t *payload)
@@ -303,7 +335,7 @@ void CRSF_Init(void)
   g_dma_last_pos = 0U;
   memset(g_dma_buffer, 0, sizeof(g_dma_buffer));
 
-  if (crsf_restart_dma(&huart2) != HAL_OK)
+  if (crsf_start_circular_dma(&huart2) != HAL_OK)
   {
 #if CRSF_DEBUG_TEST
     UartSendText("[CRSF_ERR] DMA start failed\r\n");
@@ -463,6 +495,13 @@ void CRSF_GetLinkStatistics(CRSF_LinkStatistics_t *dest)
 
 /* ==================== HAL 回调接口 ==================== */
 
+/**
+ * @brief  UART 空闲中断回调——处理环形DMA缓冲区中的新数据
+ * @details
+ *   DMA 处于循环模式，硬件自动将 UART 数据写入环形缓冲区。
+ *   当出现 IDLE（帧间空闲）时会触发本中断，计算自上次处理以来的新字节数量，
+ *   并考虑缓冲区回绕情况对数据进行解码。整个过程不停止 DMA，避免中断风暴。
+ */
 void CRSF_UART_IdleCallback(UART_HandleTypeDef *huart)
 {
   if (huart != &huart2)
@@ -485,20 +524,27 @@ void CRSF_UART_IdleCallback(UART_HandleTypeDef *huart)
     current_pos = 0U;
   }
 
-  uint16_t processed_bytes = 0U;
+  uint32_t primask = crsf_enter_critical();
+  const uint16_t last_pos = g_dma_last_pos;
+  crsf_exit_critical(primask);
 
-  if (current_pos != g_dma_last_pos)
+  uint16_t processed_bytes = 0U;
+  uint16_t buffer_usage = 0U;
+
+  if (current_pos != last_pos)
   {
-    if (current_pos > g_dma_last_pos)
+    if (current_pos > last_pos)
     {
-      processed_bytes = current_pos - g_dma_last_pos;
-      crsf_consume_bytes(&g_dma_buffer[g_dma_last_pos], processed_bytes);
+      processed_bytes = current_pos - last_pos;
+      buffer_usage = processed_bytes;
+      crsf_consume_bytes(&g_dma_buffer[last_pos], processed_bytes);
     }
     else
     {
-      uint16_t tail_len = (uint16_t)(CRSF_DMA_BUFFER_SIZE - g_dma_last_pos);
-      crsf_consume_bytes(&g_dma_buffer[g_dma_last_pos], tail_len);
+      uint16_t tail_len = (uint16_t)(CRSF_DMA_BUFFER_SIZE - last_pos);
+      crsf_consume_bytes(&g_dma_buffer[last_pos], tail_len);
       processed_bytes = tail_len;
+      buffer_usage = (uint16_t)(tail_len + current_pos);
       if (current_pos > 0U)
       {
         crsf_consume_bytes(&g_dma_buffer[0], current_pos);
@@ -506,11 +552,13 @@ void CRSF_UART_IdleCallback(UART_HandleTypeDef *huart)
       }
     }
 
+    primask = crsf_enter_critical();
     g_idle_interrupt_cnt += processed_bytes;
     g_dma_last_pos = current_pos;
+    crsf_exit_critical(primask);
   }
 
-  if (processed_bytes >= CRSF_DMA_BUFFER_SIZE)
+  if (buffer_usage > (CRSF_DMA_BUFFER_SIZE * 3U / 4U))
   {
     g_dma_overrun_count++;
   }
@@ -527,7 +575,12 @@ void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart)
   crsf_reset_parser();
   g_dma_last_pos = 0U;
   memset(g_dma_buffer, 0, sizeof(g_dma_buffer));
-  (void)crsf_restart_dma(huart);
+  if (crsf_start_circular_dma(huart) != HAL_OK)
+  {
+#if CRSF_DEBUG_TEST
+    UartSendText("[CRSF_ERR] DMA restart failed after error\r\n");
+#endif
+  }
 
   uint32_t primask = crsf_enter_critical();
   g_crsf_data.frame_error_counter++;
