@@ -66,6 +66,7 @@ static void Task_Watchdog(void);
 #define ARRAY_SIZE(array) \
   (sizeof(array) / sizeof((array)[0]) + \
    sizeof(char[1 - 2 * __builtin_types_compatible_p(typeof(array), typeof(&(array)[0]))]) * 0U)
+#define CRSF_DEBUG_TEST 1U
 
 /* USER CODE END PD */
 
@@ -127,7 +128,7 @@ static void UartSendText(const char *text)
     return;
   }
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)len, 1000U);
+  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)len, 50U);
 }
 
 static float CrsfChannelToAngle(uint16_t value)
@@ -167,11 +168,12 @@ static bool Servo_ApplyAngles(float pitch_angle, float yaw_angle)
 
 static void Task_IMU(void)
 {
+  const uint32_t task_start = HAL_GetTick();
   IMU_Data_t imu_data;
 
   if (IMU_ReadData(&imu_data) == IMU_OK)
   {
-    char uart_buffer[160];
+    char uart_buffer[160] = {0};
     const int length = snprintf(
         uart_buffer,
         sizeof(uart_buffer),
@@ -180,14 +182,20 @@ static void Task_IMU(void)
         imu_data.gyro_x,  imu_data.gyro_y,  imu_data.gyro_z,
         imu_data.temperature);
 
-    if (length > 0)
+    if ((length > 0) && (length < (int)sizeof(uart_buffer)))
     {
-      HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, 1000U);
+      HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, 50U);
     }
   }
   else
   {
     UartSendText("[ERROR] IMU数据读取失败，请检查I2C通信状态\r\n");
+  }
+
+  const uint32_t task_elapsed = HAL_GetTick() - task_start;
+  if (task_elapsed > 50U)
+  {
+    UartSendText("[WARN] Task_IMU执行超时，可能存在硬件故障\r\n");
   }
 }
 
@@ -209,6 +217,30 @@ static void Task_CRSF(void)
     {
       g_servo_command.pending = false;
     }
+
+#if CRSF_DEBUG_TEST
+    static uint32_t last_debug_tick = 0U;
+    const uint32_t now_tick = HAL_GetTick();
+    if ((now_tick - last_debug_tick) >= 500U)
+    {
+      char debug_buf[160];
+      const int written = snprintf(
+          debug_buf,
+          sizeof(debug_buf),
+          "[CRSF] frame=%lu err=%lu link=%u ch0=%u ch1=%u pending=%u\r\n",
+          (unsigned long)rc_snapshot.frame_counter,
+          (unsigned long)rc_snapshot.frame_error_counter,
+          rc_snapshot.link_active ? 1U : 0U,
+          (unsigned int)rc_snapshot.channels[0U],
+          (unsigned int)rc_snapshot.channels[1U],
+          g_servo_command.pending ? 1U : 0U);
+      if (written > 0)
+      {
+        HAL_UART_Transmit(&huart1, (uint8_t *)debug_buf, (uint16_t)written, 1000U);
+      }
+      last_debug_tick = now_tick;
+    }
+#endif
   }
 }
 

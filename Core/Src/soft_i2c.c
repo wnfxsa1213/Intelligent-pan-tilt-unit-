@@ -170,14 +170,14 @@ HAL_StatusTypeDef SoftI2C_ReadRegisters(uint8_t dev_addr, uint8_t reg_addr, uint
 /**
  * @brief  I2C时序延迟函数
  * @details
- *         增加延迟循环次数至800,提高时序余量
- *         在72MHz系统时钟下约12-15μs,对应I2C频率约33-41kHz
+ *         优化延迟循环次数至100,减少阻塞时间
+ *         在72MHz系统时钟下约1.5-2μs,对应I2C频率约250-330kHz
  *
  * @retval 无
  */
 static void SoftI2C_Delay(void)
 {
-  for (volatile uint32_t i = 0U; i < 800U; ++i)
+  for (volatile uint32_t i = 0U; i < 100U; ++i)
   {
     __NOP();
   }
