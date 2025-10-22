@@ -7,7 +7,7 @@
  ******************************************************************************
  * @attention
  *
- * 这个SB驱动把角度换算成TIM5 PWM脉宽，别tm乱传负角度。
+ * 本驱动实现角度到TIM5 PWM脉宽的转换，有效角度范围：0° ~ 270°
  * TIM基准：72MHz / 72 -> 1MHz，Period=3002 -> 333Hz
  *
  ******************************************************************************
@@ -16,11 +16,6 @@
 #include "servo.h"
 
 #include "tim.h"  /* TIM5 句柄 */
-
-#define SERVO_CHANNEL_COUNT      2U
-#define SERVO_MIN_ANGLE_DEG      0.0f
-#define SERVO_MAX_ANGLE_DEG      270.0f
-#define SERVO_CENTER_ANGLE_DEG   135.0f
 
 #define SERVO_MIN_PULSE_US       500U
 #define SERVO_MAX_PULSE_US       2500U
@@ -36,7 +31,12 @@ typedef struct
 static ServoChannel_t g_servo_channels[SERVO_CHANNEL_COUNT];
 static uint8_t        g_servo_initialized = 0U;
 
-/* 这个SB工具函数把角度映射到PWM脉宽，别越界 */
+/**
+ * @brief  将舵机角度转换为PWM脉宽
+ * @param  angle_deg  舵机角度 (度)，有效范围 [0, 270]
+ * @retval PWM脉宽 (微秒)，范围 [500, 2500]
+ * @note   超出范围的角度会被自动限制到边界值
+ */
 static uint16_t servo_angle_to_pulse(float angle_deg)
 {
   if (angle_deg <= SERVO_MIN_ANGLE_DEG)
@@ -135,7 +135,7 @@ ServoStatus_t Servo_SetAngle(ServoID_t id, float angle_deg)
     return SERVO_STATUS_INVALID_PARAM;
   }
 
-  if ((angle_deg < -360.0f) || (angle_deg > 360.0f))
+  if ((angle_deg < SERVO_MIN_ANGLE_DEG) || (angle_deg > SERVO_MAX_ANGLE_DEG))
   {
     return SERVO_STATUS_INVALID_PARAM;
   }
@@ -143,15 +143,6 @@ ServoStatus_t Servo_SetAngle(ServoID_t id, float angle_deg)
   if (g_servo_initialized == 0U)
   {
     return SERVO_STATUS_NOT_READY;
-  }
-
-  if (angle_deg < SERVO_MIN_ANGLE_DEG)
-  {
-    angle_deg = SERVO_MIN_ANGLE_DEG;
-  }
-  else if (angle_deg > SERVO_MAX_ANGLE_DEG)
-  {
-    angle_deg = SERVO_MAX_ANGLE_DEG;
   }
 
   const uint16_t pulse = servo_angle_to_pulse(angle_deg);
@@ -187,9 +178,11 @@ float Servo_GetAngle(ServoID_t id)
 }
 
 /**
- * @brief  周期性任务占位，后续加插值或保护逻辑
+ * @brief  舵机周期性更新任务
+ * @note   当前版本暂未实现，预留接口用于后续扩展平滑插值控制
+ * @todo   V1.1版本计划实现角度平滑过渡算法
  */
 void Servo_Update(void)
 {
-  /* 这破函数后面搞平滑控制的时候再说，现在留空 */
+  /* TODO(laowang): 等正式开干插值/限速再填坑，先别乱用这接口 */
 }

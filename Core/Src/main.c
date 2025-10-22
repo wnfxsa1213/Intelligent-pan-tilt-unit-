@@ -24,21 +24,36 @@
 #include "gpio.h"
 #include "servo.h"
 #include "crsf.h"
+#include "watchdog.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct
+{
+  void     (*task_func)(void);
+  uint32_t period_ms;
+  uint32_t last_run_tick;
+} Task_t;
+
+static void Task_IMU(void);
+static void Task_CRSF(void);
+static void Task_Servo(void);
+static void Task_Watchdog(void);
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 /* USER CODE END PD */
 
@@ -50,13 +65,21 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+static bool g_servo_available      = false;
+static bool g_servo_fault_reported = false;
+static Task_t g_task_table[] = {
+  { Task_IMU,      100U, 0U },
+  { Task_CRSF,      20U, 0U },
+  { Task_Servo,     20U, 0U },
+  { Task_Watchdog,  10U, 0U }
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+static void HandleRcLink(void);
+static float CrsfChannelToAngle(uint16_t value);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -86,7 +109,101 @@ static void UartSendText(const char *text)
   }
 
   /* 发送字符串到UART1 */
-  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)strlen(text), HAL_MAX_DELAY);
+  const size_t len = strnlen(text, UINT16_MAX);
+  if (len == 0U)
+  {
+    return;
+  }
+
+  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)len, 1000U);
+}
+
+static float CrsfChannelToAngle(uint16_t value)
+{
+  if (value <= CRSF_CHANNEL_VALUE_MIN)
+  {
+    return SERVO_MIN_ANGLE_DEG;
+  }
+  if (value >= CRSF_CHANNEL_VALUE_MAX)
+  {
+    return SERVO_MAX_ANGLE_DEG;
+  }
+
+  const float normalized = (float)(value - CRSF_CHANNEL_VALUE_MIN) /
+                           (float)(CRSF_CHANNEL_VALUE_MAX - CRSF_CHANNEL_VALUE_MIN);
+  return SERVO_MIN_ANGLE_DEG +
+         normalized * (SERVO_MAX_ANGLE_DEG - SERVO_MIN_ANGLE_DEG);
+}
+
+static void HandleRcLink(void)
+{
+  if (!g_servo_available)
+  {
+    return;
+  }
+
+  CRSF_Data_t rc_snapshot;
+  CRSF_GetData(&rc_snapshot);
+
+  if (!rc_snapshot.link_active)
+  {
+    return;
+  }
+
+  const float pitch_angle = CrsfChannelToAngle(rc_snapshot.channels[0U]);
+  const float yaw_angle   = CrsfChannelToAngle(rc_snapshot.channels[1U]);
+
+  if ((Servo_SetAngle(SERVO_PITCH, pitch_angle) != SERVO_STATUS_OK) ||
+      (Servo_SetAngle(SERVO_YAW, yaw_angle) != SERVO_STATUS_OK))
+  {
+    if (!g_servo_fault_reported)
+    {
+      UartSendText("[ERROR] 舵机控制命令失败，请检查TIM5配置和供电状态\r\n");
+      g_servo_fault_reported = true;
+    }
+    g_servo_available = false;
+  }
+}
+
+static void Task_IMU(void)
+{
+  IMU_Data_t imu_data;
+
+  if (IMU_ReadData(&imu_data) == IMU_OK)
+  {
+    char uart_buffer[160];
+    const int length = snprintf(
+        uart_buffer,
+        sizeof(uart_buffer),
+        "ACC[g]: %.2f %.2f %.2f | GYRO[deg/s]: %.1f %.1f %.1f | TEMP[C]: %.1f\r\n",
+        imu_data.accel_x, imu_data.accel_y, imu_data.accel_z,
+        imu_data.gyro_x,  imu_data.gyro_y,  imu_data.gyro_z,
+        imu_data.temperature);
+
+    if (length > 0)
+    {
+      HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, HAL_MAX_DELAY);
+    }
+  }
+  else
+  {
+    UartSendText("[ERROR] IMU数据读取失败，请检查I2C通信状态\r\n");
+  }
+}
+
+static void Task_CRSF(void)
+{
+  CRSF_Update();
+}
+
+static void Task_Servo(void)
+{
+  HandleRcLink();
+}
+
+static void Task_Watchdog(void)
+{
+  Watchdog_Kick();
 }
 
 /* USER CODE END 0 */
@@ -127,12 +244,22 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   const HAL_StatusTypeDef servo_status = Servo_Init();
-  if (servo_status != HAL_OK)
+  if (servo_status == HAL_OK)
   {
-    UartSendText("艹，舵机PWM没起来，直接降级成无舵机模式，回头自己查TIM5供电！\r\n");
+    g_servo_available = true;
+  }
+  else
+  {
+    UartSendText("[WARN] 舵机PWM初始化失败，系统运行于无舵机降级模式，请检查TIM5时钟和供电\r\n");
   }
 
   CRSF_Init();
+  Watchdog_Init();
+
+  if (Watchdog_WasReset())
+  {
+    UartSendText("[WARN] 检测到看门狗复位事件，请排查主循环阻塞问题\r\n");
+  }
 
   /* ==================== 初始化IMU传感器 (新API) ==================== */
 
@@ -146,7 +273,7 @@ int main(void)
      * 3. I2C地址错误 (检查AD0引脚状态)
      * 4. 芯片ID验证失败 (WHO_AM_I != 0x68)
      */
-    UartSendText("艹，IMU初始化失败，系统切换到无IMU模式，线路供电自己翻一遍！\r\n");
+    UartSendText("[ERROR] IMU初始化失败，系统运行于无IMU降级模式，请检查I2C线路和传感器供电\r\n");
   }
   else
   {
@@ -164,36 +291,16 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    /* ==================== 读取并输出IMU传感器数据 (新API) ==================== */
-
-    IMU_Data_t imu_data;  /* 物理单位数据缓冲区 */
-
-    /* 读取IMU数据 (自动转换为物理单位: g, °/s, °C) */
-    if (IMU_ReadData(&imu_data) == IMU_OK)
+    const uint32_t now = HAL_GetTick();
+    for (size_t i = 0U; i < ARRAY_SIZE(g_task_table); i++)
     {
-      char uart_buffer[160];
-
-      /* 格式化输出 - 使用浮点数,更简洁易读 */
-      const int length = snprintf(
-          uart_buffer,
-          sizeof(uart_buffer),
-          "ACC[g]: %.2f %.2f %.2f | GYRO[deg/s]: %.1f %.1f %.1f | TEMP[C]: %.1f\r\n",
-          imu_data.accel_x, imu_data.accel_y, imu_data.accel_z,
-          imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z,
-          imu_data.temperature);
-
-      if (length > 0)
+      Task_t *task = &g_task_table[i];
+      if ((now - task->last_run_tick) >= task->period_ms)
       {
-        HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, HAL_MAX_DELAY);
+        task->task_func();
+        task->last_run_tick = now;
       }
     }
-    else
-    {
-      UartSendText("艹，IMU读数又翻车了，赶紧排查！\r\n");
-    }
-
-    HAL_Delay(100U);  /* 10Hz输出频率 */
-    CRSF_Update();
 
   /* USER CODE END 3 */
   }

@@ -7,9 +7,9 @@
  ******************************************************************************
  * @attention
  *
- * 这个憨批协议的帧结构：
+ * CRSF协议帧结构：
  * [Address][Length][Type][Payload...][CRC]
- * CRC计算覆盖 Type+Payload，使用多项式0xD5。
+ * CRC计算覆盖 Type+Payload，使用多项式0xD5
  *
  ******************************************************************************
  */
@@ -225,14 +225,13 @@ void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart)
     g_crsf_data.frame_error_counter++;
   }
 
-  if (HAL_UART_Receive_IT(&huart2, &g_uart_rx_byte, 1U) != HAL_OK)
-  {
-    g_crsf_data.frame_error_counter++;
-    uint32_t primask = crsf_enter_critical();
-    g_restart_pending   = true;
-    g_last_restart_tick = HAL_GetTick();
-    crsf_exit_critical(primask);
-  }
+  __HAL_UART_CLEAR_PEFLAG(huart);
+
+  const uint32_t now = HAL_GetTick();
+  uint32_t primask = crsf_enter_critical();
+  g_restart_pending   = true;
+  g_last_restart_tick = now;
+  crsf_exit_critical(primask);
 }
 
 static uint8_t crsf_crc8(const uint8_t *data, uint8_t length)

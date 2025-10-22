@@ -7,7 +7,7 @@
  ******************************************************************************
  * @attention
  *
- * 这个SB协议来自TBS Crossfire，帧率高得离谱。
+ * CRSF协议来自TBS Crossfire系统，具有高更新率特性
  * - 波特率：420000
  * - 帧类型：0x16 (RC Channels Packed)
  * - 通道：16路，11-bit
@@ -27,6 +27,9 @@ extern "C" {
 
 #define CRSF_CHANNEL_COUNT      16U
 #define CRSF_TIMEOUT_MS         1000U
+#define CRSF_CHANNEL_VALUE_MIN      172U
+#define CRSF_CHANNEL_VALUE_NEUTRAL  992U
+#define CRSF_CHANNEL_VALUE_MAX      1811U
 
 typedef struct
 {
@@ -50,4 +53,3 @@ void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart);
 #endif
 
 #endif /* CRSF_H */
-

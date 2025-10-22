@@ -9,16 +9,29 @@
 
 #include "imu.h"
 
+/* ==================== 灵敏度查表 ==================== */
+
+static const float ACCEL_SENSITIVITY_LUT[] = {
+  16384.0f, 8192.0f, 4096.0f, 2048.0f
+};
+
+static const float GYRO_SENSITIVITY_LUT[] = {
+  131.0f, 65.5f, 32.8f, 16.4f
+};
+
 /* ==================== 私有变量 ==================== */
 
 static IMU_AccelRange_t current_accel_range = IMU_ACCEL_RANGE_2G;
 static IMU_GyroRange_t current_gyro_range = IMU_GYRO_RANGE_2000DPS;
+static float            g_accel_sensitivity = 16384.0f;
+static float            g_gyro_sensitivity  = 16.4f;
 
 /* ==================== 私有函数声明 ==================== */
 
 static float IMU_ConvertAccel(int16_t raw_value);
 static float IMU_ConvertGyro(int16_t raw_value);
 static float IMU_ConvertTemperature(int16_t raw_value);
+static void  IMU_ClearData(IMU_Data_t *data);
 
 /* ==================== 核心API实现 ==================== */
 
@@ -126,6 +139,19 @@ IMU_Status_t IMU_ReadData(IMU_Data_t *data)
     return status;
   }
 
+  if ((raw.accel_x == -1) && (raw.accel_y == -1) &&
+      (raw.accel_z == -1) && (raw.gyro_x == -1) &&
+      (raw.gyro_y == -1) && (raw.gyro_z == -1)) {
+    IMU_ClearData(data);
+    return IMU_ERROR;
+  }
+
+  const float temperature = IMU_ConvertTemperature(raw.temperature);
+  if ((temperature < -50.0f) || (temperature > 100.0f)) {
+    IMU_ClearData(data);
+    return IMU_ERROR;
+  }
+
   /* 转换为物理单位 */
   data->accel_x = IMU_ConvertAccel(raw.accel_x);
   data->accel_y = IMU_ConvertAccel(raw.accel_y);
@@ -133,7 +159,7 @@ IMU_Status_t IMU_ReadData(IMU_Data_t *data)
   data->gyro_x = IMU_ConvertGyro(raw.gyro_x);
   data->gyro_y = IMU_ConvertGyro(raw.gyro_y);
   data->gyro_z = IMU_ConvertGyro(raw.gyro_z);
-  data->temperature = IMU_ConvertTemperature(raw.temperature);
+  data->temperature = temperature;
 
   return IMU_OK;
 }
@@ -146,6 +172,11 @@ IMU_Status_t IMU_SetAccelRange(IMU_AccelRange_t range)
   IMU_Status_t status = IMU_PORT_I2C_WriteReg(IMU_PORT_I2C_ADDRESS, MPU6050_REG_ACCEL_CONFIG, config);
   if (status == IMU_OK) {
     current_accel_range = range;
+    if ((uint32_t)range < (uint32_t)(sizeof(ACCEL_SENSITIVITY_LUT) / sizeof(ACCEL_SENSITIVITY_LUT[0]))) {
+      g_accel_sensitivity = ACCEL_SENSITIVITY_LUT[(uint32_t)range];
+    } else {
+      g_accel_sensitivity = ACCEL_SENSITIVITY_LUT[IMU_ACCEL_RANGE_2G];
+    }
   }
   return status;
 }
@@ -156,6 +187,11 @@ IMU_Status_t IMU_SetGyroRange(IMU_GyroRange_t range)
   IMU_Status_t status = IMU_PORT_I2C_WriteReg(IMU_PORT_I2C_ADDRESS, MPU6050_REG_GYRO_CONFIG, config);
   if (status == IMU_OK) {
     current_gyro_range = range;
+    if ((uint32_t)range < (uint32_t)(sizeof(GYRO_SENSITIVITY_LUT) / sizeof(GYRO_SENSITIVITY_LUT[0]))) {
+      g_gyro_sensitivity = GYRO_SENSITIVITY_LUT[(uint32_t)range];
+    } else {
+      g_gyro_sensitivity = GYRO_SENSITIVITY_LUT[IMU_GYRO_RANGE_2000DPS];
+    }
   }
   return status;
 }
@@ -202,32 +238,31 @@ uint32_t IMU_GetVersion(void)
 
 static float IMU_ConvertAccel(int16_t raw_value)
 {
-  float sensitivity;
-  switch (current_accel_range) {
-    case IMU_ACCEL_RANGE_2G:  sensitivity = 16384.0f; break;
-    case IMU_ACCEL_RANGE_4G:  sensitivity = 8192.0f;  break;
-    case IMU_ACCEL_RANGE_8G:  sensitivity = 4096.0f;  break;
-    case IMU_ACCEL_RANGE_16G: sensitivity = 2048.0f;  break;
-    default: sensitivity = 16384.0f;
-  }
-  return (float)raw_value / sensitivity;
+  return (float)raw_value / g_accel_sensitivity;
 }
 
 static float IMU_ConvertGyro(int16_t raw_value)
 {
-  float sensitivity;
-  switch (current_gyro_range) {
-    case IMU_GYRO_RANGE_250DPS:  sensitivity = 131.0f;  break;
-    case IMU_GYRO_RANGE_500DPS:  sensitivity = 65.5f;   break;
-    case IMU_GYRO_RANGE_1000DPS: sensitivity = 32.8f;   break;
-    case IMU_GYRO_RANGE_2000DPS: sensitivity = 16.4f;   break;
-    default: sensitivity = 16.4f;
-  }
-  return (float)raw_value / sensitivity;
+  return (float)raw_value / g_gyro_sensitivity;
 }
 
 static float IMU_ConvertTemperature(int16_t raw_value)
 {
   /* 温度转换公式: Temperature(°C) = raw / 340.0 + 36.53 */
   return ((float)raw_value / 340.0f) + 36.53f;
+}
+
+static void IMU_ClearData(IMU_Data_t *data)
+{
+  if (data == NULL) {
+    return;
+  }
+
+  data->accel_x = 0.0f;
+  data->accel_y = 0.0f;
+  data->accel_z = 0.0f;
+  data->gyro_x  = 0.0f;
+  data->gyro_y  = 0.0f;
+  data->gyro_z  = 0.0f;
+  data->temperature = 0.0f;
 }
