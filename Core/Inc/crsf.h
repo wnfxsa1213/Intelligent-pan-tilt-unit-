@@ -29,8 +29,9 @@ extern "C" {
 #define CRSF_DEBUG_TEST 0U
 #endif
 
+#define CRSF_SIGNAL_TIMEOUT_MS     1000U
+
 #define CRSF_CHANNEL_COUNT      16U
-#define CRSF_TIMEOUT_MS         1000U
 #define CRSF_CHANNEL_VALUE_MIN      172U
 #define CRSF_CHANNEL_VALUE_NEUTRAL  992U
 #define CRSF_CHANNEL_VALUE_MAX      1811U
@@ -42,16 +43,35 @@ typedef struct
   bool     link_active;
   uint32_t frame_counter;
   uint32_t frame_error_counter;
+  uint8_t  link_quality;
+  int8_t   rssi_dbm;
 } CRSF_Data_t;
+
+typedef struct
+{
+  uint8_t uplink_rssi_ant1;
+  uint8_t uplink_rssi_ant2;
+  uint8_t uplink_link_quality;
+  int8_t  uplink_snr;
+  uint8_t active_antenna;
+  uint8_t rf_mode;
+  uint8_t uplink_tx_power;
+  uint8_t downlink_rssi;
+  uint8_t downlink_link_quality;
+  int8_t  downlink_snr;
+} CRSF_LinkStatistics_t;
 
 void CRSF_Init(void);
 void CRSF_ProcessByte(uint8_t byte);
 void CRSF_Update(void);
 bool CRSF_IsLinkActive(void);
+bool CRSF_IsSignalValid(void);
 void CRSF_GetData(CRSF_Data_t *dest);
 bool CRSF_PullLatest(CRSF_Data_t *dest);
 uint32_t CRSF_GetRxInterruptCount(void);
-void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+uint32_t CRSF_GetDmaOverrunCount(void);
+void CRSF_GetLinkStatistics(CRSF_LinkStatistics_t *dest);
+void CRSF_UART_IdleCallback(UART_HandleTypeDef *huart);
 void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart);
 
 #ifdef __cplusplus
