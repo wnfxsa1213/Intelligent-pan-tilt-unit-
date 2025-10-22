@@ -44,6 +44,7 @@ static uint8_t              g_uart_rx_byte             = 0U;
 static volatile bool        g_restart_pending          = false;
 static volatile uint32_t    g_last_frame_tick          = 0U;
 static volatile uint32_t    g_last_restart_tick        = 0U;
+static uint32_t             g_last_published_frame     = 0U;
 
 static inline uint32_t crsf_enter_critical(void)
 {
@@ -72,6 +73,7 @@ void CRSF_Init(void)
   g_crsf_data.link_active = false;
   g_last_frame_tick       = HAL_GetTick();
   g_last_restart_tick     = g_last_frame_tick;
+  g_last_published_frame  = 0U;
 
   crsf_reset_parser();
 
@@ -192,6 +194,34 @@ void CRSF_GetData(CRSF_Data_t *dest)
   CRSF_Data_t snapshot = g_crsf_data;
   crsf_exit_critical(primask);
   *dest = snapshot;
+}
+
+bool CRSF_PullLatest(CRSF_Data_t *dest)
+{
+  if (dest == NULL)
+  {
+    return false;
+  }
+
+  CRSF_Data_t snapshot = {0};
+  bool has_new_frame = false;
+
+  uint32_t primask = crsf_enter_critical();
+  const uint32_t current_counter = g_crsf_data.frame_counter;
+  if (current_counter != g_last_published_frame)
+  {
+    snapshot = g_crsf_data;
+    g_last_published_frame = current_counter;
+    has_new_frame = true;
+  }
+  crsf_exit_critical(primask);
+
+  if (has_new_frame)
+  {
+    *dest = snapshot;
+  }
+
+  return has_new_frame;
 }
 
 void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart)

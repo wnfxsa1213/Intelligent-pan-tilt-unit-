@@ -45,6 +45,7 @@ void CRSF_ProcessByte(uint8_t byte);
 void CRSF_Update(void);
 bool CRSF_IsLinkActive(void);
 void CRSF_GetData(CRSF_Data_t *dest);
+bool CRSF_PullLatest(CRSF_Data_t *dest);
 void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart);
 

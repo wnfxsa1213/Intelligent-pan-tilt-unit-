@@ -42,7 +42,17 @@ typedef struct
   void     (*task_func)(void);
   uint32_t period_ms;
   uint32_t last_run_tick;
+  uint8_t  priority;
+  const char *name;
 } Task_t;
+
+typedef struct
+{
+  float    pitch_deg;
+  float    yaw_deg;
+  uint32_t timestamp_ms;
+  bool     pending;
+} ServoCommand_t;
 
 static void Task_IMU(void);
 static void Task_CRSF(void);
@@ -53,7 +63,9 @@ static void Task_Watchdog(void);
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+#define ARRAY_SIZE(array) \
+  (sizeof(array) / sizeof((array)[0]) + \
+   sizeof(char[1 - 2 * __builtin_types_compatible_p(typeof(array), typeof(&(array)[0]))]) * 0U)
 
 /* USER CODE END PD */
 
@@ -67,18 +79,18 @@ static void Task_Watchdog(void);
 /* USER CODE BEGIN PV */
 static bool g_servo_available      = false;
 static bool g_servo_fault_reported = false;
+static ServoCommand_t g_servo_command = {0.0f, 0.0f, 0U, false};
 static Task_t g_task_table[] = {
-  { Task_IMU,      100U, 0U },
-  { Task_CRSF,      20U, 0U },
-  { Task_Servo,     20U, 0U },
-  { Task_Watchdog,  10U, 0U }
+  { Task_Watchdog,  10U, 0U, 0U, "Watchdog" },
+  { Task_CRSF,      20U, 0U, 1U, "CRSF" },
+  { Task_Servo,     20U, 0U, 2U, "Servo" },
+  { Task_IMU,      100U, 0U, 3U, "IMU" }
 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static void HandleRcLink(void);
 static float CrsfChannelToAngle(uint16_t value);
 /* USER CODE END PFP */
 
@@ -135,34 +147,22 @@ static float CrsfChannelToAngle(uint16_t value)
          normalized * (SERVO_MAX_ANGLE_DEG - SERVO_MIN_ANGLE_DEG);
 }
 
-static void HandleRcLink(void)
+static bool Servo_ApplyAngles(float pitch_angle, float yaw_angle)
 {
-  if (!g_servo_available)
-  {
-    return;
-  }
+  const ServoStatus_t pitch_status = Servo_SetAngle(SERVO_PITCH, pitch_angle);
+  const ServoStatus_t yaw_status   = Servo_SetAngle(SERVO_YAW, yaw_angle);
 
-  CRSF_Data_t rc_snapshot;
-  CRSF_GetData(&rc_snapshot);
-
-  if (!rc_snapshot.link_active)
-  {
-    return;
-  }
-
-  const float pitch_angle = CrsfChannelToAngle(rc_snapshot.channels[0U]);
-  const float yaw_angle   = CrsfChannelToAngle(rc_snapshot.channels[1U]);
-
-  if ((Servo_SetAngle(SERVO_PITCH, pitch_angle) != SERVO_STATUS_OK) ||
-      (Servo_SetAngle(SERVO_YAW, yaw_angle) != SERVO_STATUS_OK))
+  if ((pitch_status != SERVO_STATUS_OK) || (yaw_status != SERVO_STATUS_OK))
   {
     if (!g_servo_fault_reported)
     {
-      UartSendText("[ERROR] 舵机控制命令失败，请检查TIM5配置和供电状态\r\n");
+      UartSendText("艹，舵机命令写不进去，检查TIM5和供电！\r\n");
       g_servo_fault_reported = true;
     }
-    g_servo_available = false;
+    return false;
   }
+
+  return true;
 }
 
 static void Task_IMU(void)
@@ -182,7 +182,7 @@ static void Task_IMU(void)
 
     if (length > 0)
     {
-      HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, HAL_MAX_DELAY);
+      HAL_UART_Transmit(&huart1, (uint8_t *)uart_buffer, (uint16_t)length, 1000U);
     }
   }
   else
@@ -194,11 +194,45 @@ static void Task_IMU(void)
 static void Task_CRSF(void)
 {
   CRSF_Update();
+
+  CRSF_Data_t rc_snapshot;
+  if (CRSF_PullLatest(&rc_snapshot))
+  {
+    if (rc_snapshot.link_active)
+    {
+      g_servo_command.pitch_deg    = CrsfChannelToAngle(rc_snapshot.channels[0U]);
+      g_servo_command.yaw_deg      = CrsfChannelToAngle(rc_snapshot.channels[1U]);
+      g_servo_command.timestamp_ms = rc_snapshot.timestamp_ms;
+      g_servo_command.pending      = true;
+    }
+    else
+    {
+      g_servo_command.pending = false;
+    }
+  }
 }
 
 static void Task_Servo(void)
 {
-  HandleRcLink();
+  if (!g_servo_available)
+  {
+    g_servo_command.pending = false;
+    return;
+  }
+
+  if (!g_servo_command.pending)
+  {
+    return;
+  }
+
+  if (!Servo_ApplyAngles(g_servo_command.pitch_deg, g_servo_command.yaw_deg))
+  {
+    g_servo_available       = false;
+    g_servo_command.pending = false;
+    return;
+  }
+
+  g_servo_command.pending = false;
 }
 
 static void Task_Watchdog(void)
@@ -292,15 +326,60 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     const uint32_t now = HAL_GetTick();
+    Task_t *selected_task = NULL;
+
     for (size_t i = 0U; i < ARRAY_SIZE(g_task_table); i++)
     {
       Task_t *task = &g_task_table[i];
+
+      if (task->period_ms == 0U)
+      {
+        continue;
+      }
+
       if ((now - task->last_run_tick) >= task->period_ms)
       {
-        task->task_func();
-        task->last_run_tick = now;
+        if ((selected_task == NULL) || (task->priority < selected_task->priority))
+        {
+          selected_task = task;
+        }
       }
     }
+
+    if (selected_task != NULL)
+    {
+#ifdef DEBUG
+      const uint32_t start_tick = HAL_GetTick();
+#endif
+
+      selected_task->task_func();
+      selected_task->last_run_tick = now;
+
+#ifdef DEBUG
+      const uint32_t elapsed = HAL_GetTick() - start_tick;
+      const uint32_t warn_threshold = (selected_task->period_ms > 1U)
+                                        ? (selected_task->period_ms / 2U)
+                                        : 1U;
+      if (elapsed > warn_threshold)
+      {
+        char warn_buf[80];
+        const int written = snprintf(
+            warn_buf,
+            sizeof(warn_buf),
+            "[WARN] Task %s overrun: %lu ms\r\n",
+            selected_task->name,
+            (unsigned long)elapsed);
+        if (written > 0)
+        {
+          UartSendText(warn_buf);
+        }
+      }
+#endif
+
+      continue;
+    }
+
+    __WFI();
 
   /* USER CODE END 3 */
   }
