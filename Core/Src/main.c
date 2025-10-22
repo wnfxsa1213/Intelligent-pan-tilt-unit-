@@ -22,9 +22,6 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "servo.h"
-#include "crsf.h"
-#include "watchdog.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -33,6 +30,9 @@
 #include <string.h>
 #include <stdint.h>
 #include "imu.h"
+#include "servo.h"
+#include "crsf.h"
+#include "watchdog.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -481,7 +481,7 @@ int main(void)
       continue;
     }
 
-    __WFI();
+	__WFI();
 
   /* USER CODE END 3 */
   }

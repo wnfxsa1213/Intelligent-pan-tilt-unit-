@@ -15,7 +15,7 @@ extern void UartSendText(const char *text);
 #define CRSF_ADDRESS_BROADCAST          0x00U
 
 #define CRSF_FRAME_SIZE_MAX             64U
-#define CRSF_DMA_BUFFER_SIZE            CRSF_FRAME_SIZE_MAX
+#define CRSF_DMA_BUFFER_SIZE            256U
 #define CRSF_FRAME_HEADER_SIZE          2U   /* Address + Length */
 #define CRSF_RC_PAYLOAD_SIZE            22U
 #define CRSF_LINK_PAYLOAD_SIZE          10U
@@ -33,6 +33,7 @@ static uint8_t                       g_dma_buffer[CRSF_DMA_BUFFER_SIZE];
 static uint8_t                       g_parser_buffer[CRSF_FRAME_SIZE_MAX];
 static uint16_t                      g_parser_index       = 0U;
 static uint16_t                      g_expected_length    = 0U;
+static volatile uint16_t             g_dma_last_pos       = 0U;
 
 static volatile uint32_t             g_last_frame_tick    = 0U;
 static volatile uint32_t             g_dma_overrun_count  = 0U;
@@ -108,13 +109,20 @@ static void crsf_reset_parser(void)
   memset(g_parser_buffer, 0, sizeof(g_parser_buffer));
 }
 
-static void crsf_restart_dma(UART_HandleTypeDef *huart)
+static HAL_StatusTypeDef crsf_restart_dma(UART_HandleTypeDef *huart)
 {
-  if (HAL_UART_Receive_DMA(huart, g_dma_buffer, sizeof(g_dma_buffer)) != HAL_OK)
+  HAL_StatusTypeDef status = HAL_UART_Receive_DMA(huart, g_dma_buffer, sizeof(g_dma_buffer));
+  if (status == HAL_OK)
   {
-    Error_Handler();
+    __HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
   }
-  __HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
+#if CRSF_DEBUG_TEST
+  else
+  {
+    UartSendText("[CRSF_ERR] UART DMA restart failed\r\n");
+  }
+#endif
+  return status;
 }
 
 static void crsf_parse_rc_channels(const uint8_t *payload)
@@ -292,15 +300,16 @@ void CRSF_Init(void)
   g_signal_state_change_ms = 0U;
 
   crsf_reset_parser();
+  g_dma_last_pos = 0U;
+  memset(g_dma_buffer, 0, sizeof(g_dma_buffer));
 
-  if (HAL_UART_Receive_DMA(&huart2, g_dma_buffer, sizeof(g_dma_buffer)) != HAL_OK)
+  if (crsf_restart_dma(&huart2) != HAL_OK)
   {
 #if CRSF_DEBUG_TEST
-    UartSendText("[CRSF] DMA start failed\r\n");
+    UartSendText("[CRSF_ERR] DMA start failed\r\n");
 #endif
-    Error_Handler();
+    return;
   }
-  __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
 
 #if CRSF_DEBUG_TEST
   UartSendText("[CRSF] DMA receiver ready\r\n");
@@ -469,27 +478,42 @@ void CRSF_UART_IdleCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  if (HAL_UART_DMAStop(huart) != HAL_OK)
+  const uint16_t dma_remaining = __HAL_DMA_GET_COUNTER(hdma);
+  uint16_t current_pos = (uint16_t)(CRSF_DMA_BUFFER_SIZE - dma_remaining);
+  if (current_pos >= CRSF_DMA_BUFFER_SIZE)
   {
-    Error_Handler();
+    current_pos = 0U;
   }
 
-  const uint16_t remaining = __HAL_DMA_GET_COUNTER(hdma);
-  const uint16_t received  = (uint16_t)(sizeof(g_dma_buffer) - remaining);
+  uint16_t processed_bytes = 0U;
 
-  if (received >= sizeof(g_dma_buffer))
+  if (current_pos != g_dma_last_pos)
+  {
+    if (current_pos > g_dma_last_pos)
+    {
+      processed_bytes = current_pos - g_dma_last_pos;
+      crsf_consume_bytes(&g_dma_buffer[g_dma_last_pos], processed_bytes);
+    }
+    else
+    {
+      uint16_t tail_len = (uint16_t)(CRSF_DMA_BUFFER_SIZE - g_dma_last_pos);
+      crsf_consume_bytes(&g_dma_buffer[g_dma_last_pos], tail_len);
+      processed_bytes = tail_len;
+      if (current_pos > 0U)
+      {
+        crsf_consume_bytes(&g_dma_buffer[0], current_pos);
+        processed_bytes = (uint16_t)(processed_bytes + current_pos);
+      }
+    }
+
+    g_idle_interrupt_cnt += processed_bytes;
+    g_dma_last_pos = current_pos;
+  }
+
+  if (processed_bytes >= CRSF_DMA_BUFFER_SIZE)
   {
     g_dma_overrun_count++;
   }
-
-  if (received > 0U)
-  {
-    g_idle_interrupt_cnt += received;
-    crsf_consume_bytes(g_dma_buffer, received);
-  }
-
-  memset(g_dma_buffer, 0, sizeof(g_dma_buffer));
-  crsf_restart_dma(huart);
 }
 
 void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -501,7 +525,9 @@ void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
   (void)HAL_UART_DMAStop(huart);
   crsf_reset_parser();
-  crsf_restart_dma(huart);
+  g_dma_last_pos = 0U;
+  memset(g_dma_buffer, 0, sizeof(g_dma_buffer));
+  (void)crsf_restart_dma(huart);
 
   uint32_t primask = crsf_enter_critical();
   g_crsf_data.frame_error_counter++;

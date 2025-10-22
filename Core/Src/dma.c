@@ -49,7 +49,9 @@ void MX_DMA_Init(void)
   /* DMA1_Channel3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-
+  /* USER CODE BEGIN DMA_NVIC_DISABLE */
+  /* 不使用 USART2 DMA 中断，保持默认关闭，避免空中断开销 */
+  /* USER CODE END DMA_NVIC_DISABLE */
 }
 
 /* USER CODE BEGIN 2 */
