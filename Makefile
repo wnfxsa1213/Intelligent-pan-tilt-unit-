@@ -22,7 +22,11 @@ TARGET = IMU
 # debug build?
 DEBUG = 1
 # optimization
+ifeq ($(DEBUG), 1)
+OPT = -Og
+else
 OPT = -O2
+endif
 
 
 #######################################

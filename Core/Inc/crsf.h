@@ -36,7 +36,7 @@ extern "C" {
 #define CRSF_CHANNEL_VALUE_NEUTRAL  992U
 #define CRSF_CHANNEL_VALUE_MAX      1811U
 
-typedef struct
+typedef struct CRSF_Data
 {
   uint16_t channels[CRSF_CHANNEL_COUNT];
   uint32_t timestamp_ms;
@@ -47,7 +47,7 @@ typedef struct
   int8_t   rssi_dbm;
 } CRSF_Data_t;
 
-typedef struct
+typedef struct CRSF_LinkStatistics
 {
   uint8_t uplink_rssi_ant1;
   uint8_t uplink_rssi_ant2;
