@@ -22,7 +22,7 @@ TARGET = IMU
 # debug build?
 DEBUG = 1
 # optimization
-OPT = -Og
+OPT = -O2
 
 
 #######################################
@@ -43,6 +43,7 @@ Core/Src/imu.c \
 Core/Src/soft_i2c.c \
 Core/Src/servo.c \
 Core/Src/crsf.c \
+Core/Src/safety_control.c \
 Core/Src/watchdog.c \
 Core/Src/stm32f1xx_it.c \
 Core/Src/stm32f1xx_hal_msp.c \
@@ -121,7 +122,7 @@ C_DEFS =  \
 -DUSE_HAL_DRIVER \
 -DSTM32F103xE
 
-CRSF_DEBUG ?= 1
+CRSF_DEBUG ?= 0
 
 ifeq ($(CRSF_DEBUG),1)
 C_DEFS += -DCRSF_DEBUG_TEST=1

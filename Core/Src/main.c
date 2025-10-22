@@ -33,6 +33,7 @@
 #include "servo.h"
 #include "crsf.h"
 #include "watchdog.h"
+#include "safety_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -205,19 +206,29 @@ static void Task_CRSF(void)
   CRSF_Data_t rc_snapshot;
   const bool has_new_frame = CRSF_PullLatest(&rc_snapshot);
 
+  SafetyControl_Update(has_new_frame ? &rc_snapshot : NULL, has_new_frame);
+
   if (has_new_frame)
   {
-    if (rc_snapshot.link_active)
-    {
-      g_servo_command.pitch_deg    = CrsfChannelToAngle(rc_snapshot.channels[0U]);
-      g_servo_command.yaw_deg      = CrsfChannelToAngle(rc_snapshot.channels[1U]);
-      g_servo_command.timestamp_ms = rc_snapshot.timestamp_ms;
-      g_servo_command.pending      = true;
-    }
-    else
-    {
-      g_servo_command.pending = false;
-    }
+    g_servo_command.timestamp_ms = rc_snapshot.timestamp_ms;
+  }
+
+  if (SafetyControl_IsGimbalLocked())
+  {
+    g_servo_command.pitch_deg = SERVO_CENTER_ANGLE_DEG;
+    g_servo_command.yaw_deg   = SERVO_CENTER_ANGLE_DEG;
+    g_servo_command.timestamp_ms = HAL_GetTick();
+    g_servo_command.pending   = true;
+  }
+  else if (has_new_frame && rc_snapshot.link_active)
+  {
+    g_servo_command.pitch_deg    = CrsfChannelToAngle(rc_snapshot.channels[0U]);
+    g_servo_command.yaw_deg      = CrsfChannelToAngle(rc_snapshot.channels[1U]);
+    g_servo_command.pending      = true;
+  }
+  else
+  {
+    g_servo_command.pending = false;
   }
 
 #if CRSF_DEBUG_TEST
@@ -391,6 +402,8 @@ int main(void)
   UartSendText(uart_info);
 #endif
   Watchdog_Init();
+
+  SafetyControl_Init();
 
   if (Watchdog_WasReset())
   {
