@@ -25,6 +25,10 @@ extern "C" {
 #include "stm32f1xx_hal.h"
 #include <stdbool.h>
 
+#ifndef CRSF_DEBUG_TEST
+#define CRSF_DEBUG_TEST 0U
+#endif
+
 #define CRSF_CHANNEL_COUNT      16U
 #define CRSF_TIMEOUT_MS         1000U
 #define CRSF_CHANNEL_VALUE_MIN      172U
@@ -46,6 +50,7 @@ void CRSF_Update(void);
 bool CRSF_IsLinkActive(void);
 void CRSF_GetData(CRSF_Data_t *dest);
 bool CRSF_PullLatest(CRSF_Data_t *dest);
+uint32_t CRSF_GetRxInterruptCount(void);
 void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 void CRSF_UART_ErrorCallback(UART_HandleTypeDef *huart);
 

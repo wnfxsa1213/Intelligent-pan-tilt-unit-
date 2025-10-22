@@ -66,7 +66,6 @@ static void Task_Watchdog(void);
 #define ARRAY_SIZE(array) \
   (sizeof(array) / sizeof((array)[0]) + \
    sizeof(char[1 - 2 * __builtin_types_compatible_p(typeof(array), typeof(&(array)[0]))]) * 0U)
-#define CRSF_DEBUG_TEST 1U
 
 /* USER CODE END PD */
 
@@ -113,7 +112,7 @@ static float CrsfChannelToAngle(uint16_t value);
  * @note   阻塞模式 (HAL_MAX_DELAY): 等待数据完全发送完成
  * @note   发送前需确保UART已通过MX_USART1_UART_Init()初始化
  */
-static void UartSendText(const char *text)
+void UartSendText(const char *text)
 {
   /* 防御性编程: 检查空指针 */
   if (text == NULL)
@@ -128,7 +127,7 @@ static void UartSendText(const char *text)
     return;
   }
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)len, 50U);
+  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)len, 1000U);
 }
 
 static float CrsfChannelToAngle(uint16_t value)
@@ -204,7 +203,9 @@ static void Task_CRSF(void)
   CRSF_Update();
 
   CRSF_Data_t rc_snapshot;
-  if (CRSF_PullLatest(&rc_snapshot))
+  const bool has_new_frame = CRSF_PullLatest(&rc_snapshot);
+
+  if (has_new_frame)
   {
     if (rc_snapshot.link_active)
     {
@@ -217,31 +218,46 @@ static void Task_CRSF(void)
     {
       g_servo_command.pending = false;
     }
+  }
 
 #if CRSF_DEBUG_TEST
-    static uint32_t last_debug_tick = 0U;
-    const uint32_t now_tick = HAL_GetTick();
-    if ((now_tick - last_debug_tick) >= 500U)
+  static uint32_t last_debug_tick = 0U;
+  static uint32_t last_rx_count   = 0U;
+  const uint32_t now_tick = HAL_GetTick();
+
+  if ((now_tick - last_debug_tick) >= 500U)
+  {
+    CRSF_Data_t current_state;
+    CRSF_GetData(&current_state);
+
+    const uint32_t current_rx_count = CRSF_GetRxInterruptCount();
+    const uint32_t rx_delta         = current_rx_count - last_rx_count;
+
+    char debug_buf[200];
+    const int written = snprintf(
+        debug_buf,
+        sizeof(debug_buf),
+        "[CRSF] NEW=%u RX_INT=%lu (+%lu) frame=%lu err=%lu link=%u ch0=%u ch1=%u pitch=%.1f yaw=%.1f pend=%u\r\n",
+        has_new_frame ? 1U : 0U,
+        (unsigned long)current_rx_count,
+        (unsigned long)rx_delta,
+        (unsigned long)current_state.frame_counter,
+        (unsigned long)current_state.frame_error_counter,
+        current_state.link_active ? 1U : 0U,
+        (unsigned int)current_state.channels[0U],
+        (unsigned int)current_state.channels[1U],
+        g_servo_command.pitch_deg,
+        g_servo_command.yaw_deg,
+        g_servo_command.pending ? 1U : 0U);
+    if ((written > 0) && (written < (int)sizeof(debug_buf)))
     {
-      char debug_buf[160];
-      const int written = snprintf(
-          debug_buf,
-          sizeof(debug_buf),
-          "[CRSF] frame=%lu err=%lu link=%u ch0=%u ch1=%u pending=%u\r\n",
-          (unsigned long)rc_snapshot.frame_counter,
-          (unsigned long)rc_snapshot.frame_error_counter,
-          rc_snapshot.link_active ? 1U : 0U,
-          (unsigned int)rc_snapshot.channels[0U],
-          (unsigned int)rc_snapshot.channels[1U],
-          g_servo_command.pending ? 1U : 0U);
-      if (written > 0)
-      {
-        HAL_UART_Transmit(&huart1, (uint8_t *)debug_buf, (uint16_t)written, 1000U);
-      }
-      last_debug_tick = now_tick;
+      HAL_UART_Transmit(&huart1, (uint8_t *)debug_buf, (uint16_t)written, 50U);
     }
-#endif
+
+    last_debug_tick = now_tick;
+    last_rx_count   = current_rx_count;
   }
+#endif
 }
 
 static void Task_Servo(void)
@@ -249,6 +265,13 @@ static void Task_Servo(void)
   if (!g_servo_available)
   {
     g_servo_command.pending = false;
+#if CRSF_DEBUG_TEST
+    static uint32_t warn_count = 0U;
+    if (((++warn_count) % 50U) == 0U)
+    {
+      UartSendText("[SERVO] WARN: g_servo_available=false, 舵机未初始化\r\n");
+    }
+#endif
     return;
   }
 
@@ -257,12 +280,39 @@ static void Task_Servo(void)
     return;
   }
 
+#if CRSF_DEBUG_TEST
+  const float pitch_before = Servo_GetAngle(SERVO_PITCH);
+  const float yaw_before   = Servo_GetAngle(SERVO_YAW);
+#endif
+
   if (!Servo_ApplyAngles(g_servo_command.pitch_deg, g_servo_command.yaw_deg))
   {
     g_servo_available       = false;
     g_servo_command.pending = false;
+    UartSendText("[SERVO] ERROR: Servo_ApplyAngles失败，舵机已禁用\r\n");
     return;
   }
+
+#if CRSF_DEBUG_TEST
+  const float pitch_after = Servo_GetAngle(SERVO_PITCH);
+  const float yaw_after   = Servo_GetAngle(SERVO_YAW);
+
+  static uint32_t exec_count = 0U;
+  if (((++exec_count) % 25U) == 0U)
+  {
+    char servo_debug[120];
+    const int len = snprintf(
+        servo_debug,
+        sizeof(servo_debug),
+        "[SERVO] EXEC: Pitch %.1f->%.1f Yaw %.1f->%.1f\r\n",
+        pitch_before, pitch_after,
+        yaw_before,   yaw_after);
+    if ((len > 0) && (len < (int)sizeof(servo_debug)))
+    {
+      HAL_UART_Transmit(&huart1, (uint8_t *)servo_debug, (uint16_t)len, 50U);
+    }
+  }
+#endif
 
   g_servo_command.pending = false;
 }
@@ -309,10 +359,16 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+#if CRSF_DEBUG_TEST
+  UartSendText("=== CRSF云台控制系统 DEBUG模式 ===\r\n");
+#endif
   const HAL_StatusTypeDef servo_status = Servo_Init();
   if (servo_status == HAL_OK)
   {
     g_servo_available = true;
+#if CRSF_DEBUG_TEST
+    UartSendText("[INIT] 舵机初始化成功 (TIM5 PWM已启动)\r\n");
+#endif
   }
   else
   {
@@ -320,6 +376,20 @@ int main(void)
   }
 
   CRSF_Init();
+#if CRSF_DEBUG_TEST
+  UartSendText("[INIT] CRSF协议初始化完成 (UART2 420000bps)\r\n");
+  char uart_info[80];
+  uint32_t preempt_priority = 0U;
+  uint32_t sub_priority     = 0U;
+  HAL_NVIC_GetPriority(USART2_IRQn, 0U, &preempt_priority, &sub_priority);
+  (void)snprintf(
+      uart_info,
+      sizeof(uart_info),
+      "[INIT] UART2: RX=PA3 TX=PA2 IRQ_Pri=%lu/%lu\r\n",
+      (unsigned long)preempt_priority,
+      (unsigned long)sub_priority);
+  UartSendText(uart_info);
+#endif
   Watchdog_Init();
 
   if (Watchdog_WasReset())

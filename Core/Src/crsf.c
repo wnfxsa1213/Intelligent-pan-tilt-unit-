@@ -17,8 +17,12 @@
 #include "crsf.h"
 
 #include <string.h>
+#include <stdio.h>
 
 #include "usart.h"
+#if CRSF_DEBUG_TEST
+extern void UartSendText(const char *text);
+#endif
 
 #define CRSF_DEVICE_ADDRESS               0xC8U
 #define CRSF_FRAME_TYPE_RC_CHANNELS       0x16U
@@ -45,6 +49,7 @@ static volatile bool        g_restart_pending          = false;
 static volatile uint32_t    g_last_frame_tick          = 0U;
 static volatile uint32_t    g_last_restart_tick        = 0U;
 static uint32_t             g_last_published_frame     = 0U;
+static volatile uint32_t    g_uart_rx_interrupt_count  = 0U;
 
 static inline uint32_t crsf_enter_critical(void)
 {
@@ -224,12 +229,22 @@ bool CRSF_PullLatest(CRSF_Data_t *dest)
   return has_new_frame;
 }
 
+uint32_t CRSF_GetRxInterruptCount(void)
+{
+  uint32_t primask = crsf_enter_critical();
+  const uint32_t count = g_uart_rx_interrupt_count;
+  crsf_exit_critical(primask);
+  return count;
+}
+
 void CRSF_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance != USART2)
   {
     return;
   }
+
+  g_uart_rx_interrupt_count++;
 
   CRSF_ProcessByte(g_uart_rx_byte);
 
@@ -299,6 +314,9 @@ static void crsf_handle_frame(const uint8_t *frame, uint8_t length)
   if (length < CRSF_PAYLOAD_MIN_LENGTH)
   {
     g_crsf_data.frame_error_counter++;
+#if CRSF_DEBUG_TEST
+    UartSendText("[CRSF_ERR] Frame too short\r\n");
+#endif
     return;
   }
 
@@ -308,6 +326,19 @@ static void crsf_handle_frame(const uint8_t *frame, uint8_t length)
   if (received_crc != computed_crc)
   {
     g_crsf_data.frame_error_counter++;
+#if CRSF_DEBUG_TEST
+    char err_buf[64];
+    const int len = snprintf(
+        err_buf,
+        sizeof(err_buf),
+        "[CRSF_ERR] CRC mismatch: RX=%02X computed=%02X\r\n",
+        received_crc,
+        computed_crc);
+    if ((len > 0) && (len < (int)sizeof(err_buf)))
+    {
+      UartSendText(err_buf);
+    }
+#endif
     return;
   }
 

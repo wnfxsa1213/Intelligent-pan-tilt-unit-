@@ -121,6 +121,14 @@ C_DEFS =  \
 -DUSE_HAL_DRIVER \
 -DSTM32F103xE
 
+CRSF_DEBUG ?= 1
+
+ifeq ($(CRSF_DEBUG),1)
+C_DEFS += -DCRSF_DEBUG_TEST=1
+else
+C_DEFS += -DCRSF_DEBUG_TEST=0
+endif
+
 
 # AS includes
 AS_INCLUDES = 
